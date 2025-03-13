@@ -10,7 +10,6 @@ This module provides:
 
 from .common import *
 
-from .common import openai_client, mongo
 import json
 import yaml
 import logging
@@ -68,7 +67,7 @@ def Send(messages, temperature=0.2, model="gpt-4o-mini", group=None):
     if not messages:
         return None
     
-    response = openai_client.chat.completions.create(
+    response = db.openai.chat.completions.create(
         model=model,
         messages=messages,
         temperature=temperature,
@@ -83,7 +82,7 @@ def Send(messages, temperature=0.2, model="gpt-4o-mini", group=None):
     }
     total_cost = (pricing[model][0] * inp_tok + pricing[model][1] * out_tok) / 1e6
 
-    mongo['LLM_calls'].insert_one({
+    db.mongo['LLM_calls'].insert_one({
         'input': inp_tok,
         'output': out_tok,
         'group': group,

@@ -13,7 +13,7 @@ authors = [
     { name = "Alec McGail", email = "amcgail2@gmail.com" }
 ]
 dependencies = [
-    "pinecone-client",
+    "pinecone",
     "openai",
     "pymongo",
     "python-dotenv",

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chatlib"
+version = "0.1.0"
+description = "A library for building chat applications with LLMs"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [
+    { name = "Alec McGail", email = "amcgail2@gmail.com" }
+]
+dependencies = [
+    "pinecone-client",
+    "openai",
+    "pymongo",
+    "python-dotenv",
+    "pyyaml",
+]
+
+[project.urls]
+Homepage = "https://github.com/amcgail/chatlib"
+Repository = "https://github.com/amcgail/chatlib.git" 

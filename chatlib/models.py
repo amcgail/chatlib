@@ -1,37 +1,108 @@
-from dotenv import load_dotenv
+"""
+LLM model implementations and utilities for ChatLib.
 
-# load from this directory
+This module provides:
+- Base Model class with validation utilities
+- Implementations for various LLM providers (OpenAI, Anthropic, Mistral)
+- Message transformation utilities
+- Cost tracking for different models
+"""
+
+from dotenv import load_dotenv
+import json
+from types import FunctionType
+from itertools import groupby
+import os
+from openai import OpenAI
+from anthropic import Anthropic
+from mistralai.client import MistralClient
+from mistralai.models.chat_completion import ChatMessage
+
+# Load environment variables from this directory
 load_dotenv()
 
+# Default temperature for all models
 TEMPERATURE = 0.25
 
 def transform_message(m):
-    if type(m) in {tuple, list}:
+    """
+    Transform a message tuple into a dictionary format.
+    
+    Args:
+        m: Either a tuple of (role, content) or a dictionary
+        
+    Returns:
+        dict: Message in dictionary format with 'role' and 'content' keys
+    """
+    if isinstance(m, (tuple, list)):
         assert len(m) == 2
         return {"role": m[0], "content": m[1]}
     return m
 
 def transform_messages(ms):
-    if not len(ms): return []
+    """
+    Transform a list of messages into the standard format.
+    
+    Args:
+        ms: List of messages (can be tuples or dictionaries)
+        
+    Returns:
+        list: List of messages in dictionary format
+    """
+    if not ms:
+        return []
     return [transform_message(m) for m in ms]
 
-
 class Model:
+    """
+    Base class for LLM model implementations.
+    
+    This class provides common functionality for all LLM models including:
+    - Message validation and type conversion
+    - Cost tracking
+    - Response formatting
+    """
+    
     def __repr__(self) -> str:
+        """Return a string representation of the model."""
         return self.name if hasattr(self, "name") else super().__repr__()
     
     def execute(self, messages):
+        """
+        Execute the model with the given messages.
+        
+        Args:
+            messages: List of messages to process
+            
+        Returns:
+            Result: The model's response with token usage information
+            
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
         raise NotImplementedError
     
     _type = type
     def valid(self, messages, type='json', iters=None, **kwargs):
-        from types import FunctionType
-        import json
-
+        """
+        Get a validated response from the model.
+        
+        Args:
+            messages: List of messages to process
+            type: Expected response type ('json', 'int', 'float', 'bool', 'list', 'str' or custom function)
+            iters: Maximum number of attempts to get valid response
+            **kwargs: Additional arguments to pass to execute()
+            
+        Returns:
+            The validated response in the requested type
+            
+        Raises:
+            ValueError: If unable to get valid response after max attempts
+        """
         if iters is None:
             iters = 3
         
-        for iters in range(iters):
+        for _ in range(iters):
             resp = self.execute(messages, **kwargs)
 
             if resp.lower().strip() == 'none':
@@ -43,10 +114,8 @@ class Model:
                     try:
                         if resp[:7] == '```json':
                             resp = resp[7:-3].strip()
-
                         resp = json.loads(resp)
                         return resp
-                    
                     except ValueError:
                         messages.append(('assistant', resp))
                         messages.append(('user', 'Respond with a valid JSON object. Always use double quotes.'))
@@ -57,7 +126,6 @@ class Model:
                         resp = resp.strip()
                         resp = int(resp)
                         return resp
-                    
                     except ValueError:
                         messages.append(('assistant', resp))
                         messages.append(('user', 'Please respond now with just the number, nothing else.'))
@@ -68,7 +136,6 @@ class Model:
                         resp = resp.strip()
                         resp = float(resp)
                         return resp
-                    
                     except ValueError:
                         messages.append(('assistant', resp))
                         messages.append(('user', 'Please respond now with just the number, nothing else.'))
@@ -106,7 +173,6 @@ class Model:
                 except ValueError as e:
                     message = e.args[0]
                     print('FAIL', resp, message)
-
                     messages.append(('assistant', resp))
                     messages.append(('user', message))
                     continue
@@ -114,13 +180,28 @@ class Model:
         raise ValueError('Could not get a valid response')
     
 class Result:
+    """
+    Container for LLM response results.
+    
+    Attributes:
+        content (str): The response content
+        prompt_tokens (int): Number of tokens in the prompt
+        completion_tokens (int): Number of tokens in the completion
+    """
+    
     def __init__(self, content, prompt_tokens, completion_tokens):
         self.content = content
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
 
 class Mistral(Model):
-    costs = {  # cents per 1M tokens, input/output
+    """
+    Mistral AI model implementation.
+    
+    Costs are in cents per 1M tokens (input/output).
+    """
+    
+    costs = {
         "open-mistral-7b": (25, 25),
         "open-mixtral-8x7b": (70, 70),
         "mistral-small-2402": (100, 300),
@@ -128,15 +209,26 @@ class Mistral(Model):
     }
 
     def __init__(self, model="open-mistral-7b"):
+        """
+        Initialize a Mistral model.
+        
+        Args:
+            model: The model name to use
+        """
         self.model = model
         self.name = f"mistral<{model}>"
         self.cost = Mistral.costs[model]
 
     def execute(self, messages):
-
-        from mistralai.client import MistralClient
-        from mistralai.models.chat_completion import ChatMessage
-
+        """
+        Execute the Mistral model.
+        
+        Args:
+            messages: List of messages to process
+            
+        Returns:
+            Result: The model's response with token usage information
+        """
         messages = transform_messages(messages)
         messages = [ChatMessage(role=m["role"], content=m["content"]) for m in messages]
 
@@ -155,9 +247,14 @@ class Mistral(Model):
             completion_tokens=chat_completion.usage.completion_tokens
         )
 
-
 class OpenAIChat(Model):
-    costs = { # cents per 1M tokens, input/output
+    """
+    OpenAI model implementation.
+    
+    Costs are in cents per 1M tokens (input/output).
+    """
+    
+    costs = {
         "gpt-4o": (500, 1500),
         "gpt-4-turbo": (1000, 3000),
         "gpt-4": (3000, 6000),
@@ -167,14 +264,27 @@ class OpenAIChat(Model):
     }
 
     def __init__(self, model="gpt-4o-mini"):
+        """
+        Initialize an OpenAI model.
+        
+        Args:
+            model: The model name to use
+        """
         self.model = model
         self.name = f"openai<{model}>"
         self.cost = OpenAIChat.costs[model]
 
     def execute(self, messages):
-        from openai import OpenAI
+        """
+        Execute the OpenAI model.
+        
+        Args:
+            messages: List of messages to process
+            
+        Returns:
+            Result: The model's response with token usage information
+        """
         client = OpenAI()
-
         messages = transform_messages(messages)
 
         result = client.chat.completions.create(
@@ -191,25 +301,42 @@ class OpenAIChat(Model):
         )
 
 class AnthropicChat(Model):
-    costs = {  # cents per 1M tokens, input/output
+    """
+    Anthropic Claude model implementation.
+    
+    Costs are in cents per 1M tokens (input/output).
+    """
+    
+    costs = {
         "claude-3-haiku-20240307": (25, 125),
         "claude-3-sonnet-20240229": (300, 1500),
         "claude-3-opus-20240229": (1500, 7500),
     }
 
     def __init__(self, model="claude-3-haiku-20240307"):
+        """
+        Initialize an Anthropic model.
+        
+        Args:
+            model: The model name to use
+        """
         self.model = model
         self.name = f"anthropic<{model}>"
         self.cost = AnthropicChat.costs[model]
 
     def execute(self, messages):
-        import os
-        from anthropic import Anthropic
-
+        """
+        Execute the Anthropic model.
+        
+        Args:
+            messages: List of messages to process
+            
+        Returns:
+            Result: The model's response with token usage information
+        """
         messages = transform_messages(messages)
 
-        # for Anthropic, you can't have multiple user: messages in a row
-        from itertools import groupby
+        # Combine consecutive messages from the same role
         new_messages = []
         for k, g in groupby(messages, key=lambda x: x["role"]):
             new_messages.append({
@@ -217,10 +344,8 @@ class AnthropicChat(Model):
                 "content": "\n\n".join(x["content"] for x in g)
             })
 
-        # Initialize the client using an API key from environment variables
         client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-        # Create and send the message request
         response = client.messages.create(
             model=self.model,
             messages=new_messages,
@@ -228,13 +353,11 @@ class AnthropicChat(Model):
             temperature=TEMPERATURE,
         )
 
-        # Return the content of the response
         content = "\n\n".join(x.text for x in response.content)
         return Result(
             content=content,
             prompt_tokens=response.usage.input_tokens,
             completion_tokens=response.usage.output_tokens
-        
         )
 
 class Groq(Model):

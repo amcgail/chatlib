@@ -1,20 +1,41 @@
+"""
+LLM interaction utilities for ChatLib.
+
+This module provides:
+- Message transformation utilities
+- Direct LLM interaction functions
+- Response validation and type conversion
+- Cost tracking and logging
+"""
+
 from .common import *
 
 from .common import openai_client, mongo
 import json
 import yaml
 import logging
+import re
+from types import FunctionType
 
 logger = logging.getLogger(__name__)
 
 def transform_messages(messages):
-    if type(messages) == str:
+    """
+    Transform messages into the standard format for LLM APIs.
+    
+    Args:
+        messages: Either a string, list of tuples, or list of dictionaries
+        
+    Returns:
+        list: List of messages in dictionary format with 'role' and 'content' keys
+    """
+    if isinstance(messages, str):
         return [
             {"role": "user", "content": messages}
         ]
         
     # Convert list of tuples to list of dictionaries
-    if type(messages[0]) == tuple:
+    if isinstance(messages[0], tuple):
         return [
             {"role": role, "content": content}
             for role, content in messages
@@ -24,12 +45,27 @@ def transform_messages(messages):
 
 
 def Send(messages, temperature=0.2, model="gpt-4o-mini", group=None):
+    """
+    Send messages to the LLM and get a response.
+    
+    Args:
+        messages: Messages to send to the LLM
+        temperature: Temperature parameter for response generation
+        model: The model to use
+        group: Optional group identifier for cost tracking
+        
+    Returns:
+        str: The LLM's response content
+        
+    Note:
+        Costs are tracked in MongoDB under the 'LLM_calls' collection
+    """
     #model="gpt-3.5-turbo"
     #model="gpt-4-turbo"
 
     messages = transform_messages(messages)
 
-    if not len(messages):
+    if not messages:
         return None
     
     response = openai_client.chat.completions.create(
@@ -58,30 +94,42 @@ def Send(messages, temperature=0.2, model="gpt-4o-mini", group=None):
     return response.choices[0].message.content
     
 class ValidError(Exception):
+    """Exception raised when validation fails."""
     pass
 
 _type = type
 def SendValid(ms, type='json', iters=3, **kwargs):
-    from types import FunctionType
-
+    """
+    Send messages to the LLM and get a validated response.
+    
+    Args:
+        ms: Messages to send to the LLM
+        type: Expected response type ('json', 'yaml', 'int', 'float', 'bool', 'list', 'str' or custom function)
+        iters: Maximum number of attempts to get valid response
+        **kwargs: Additional arguments to pass to Send()
+        
+    Returns:
+        The validated response in the requested type
+        
+    Raises:
+        ValueError: If unable to get valid response after max attempts
+    """
     ms = transform_messages(ms)    
     
-    for iters in range(iters):
+    for _ in range(iters):
         resp = Send(ms, **kwargs)
 
         if resp.lower().strip('. ') == 'none':
             return None
 
-        if _type(type) == str:
+        if isinstance(type, str):
             if type == 'json':
                 resp = resp.strip()
                 try:
                     if resp[:7] == '```json':
                         resp = resp[7:-3].strip()
-
                     resp = json.loads(resp)
                     return resp
-                
                 except ValueError:
                     ms += [
                         {'role':'assistant', 'content': resp},
@@ -94,10 +142,8 @@ def SendValid(ms, type='json', iters=3, **kwargs):
                 try:
                     if resp[:7] == '```yaml':
                         resp = resp[7:-3].strip()
-
                     resp = yaml.safe_load(resp)
                     return resp
-                
                 except yaml.YAMLError:
                     ms += [
                         {'role':'assistant', 'content': resp},
@@ -110,7 +156,6 @@ def SendValid(ms, type='json', iters=3, **kwargs):
                     resp = resp.strip()
                     resp = int(resp)
                     return resp
-                
                 except ValueError:
                     ms += [
                         {'role':'assistant', 'content': resp},
@@ -123,7 +168,6 @@ def SendValid(ms, type='json', iters=3, **kwargs):
                     resp = resp.strip()
                     resp = float(resp)
                     return resp
-                
                 except ValueError:
                     ms += [
                         {'role':'assistant', 'content': resp},
@@ -156,7 +200,7 @@ def SendValid(ms, type='json', iters=3, **kwargs):
                 return resp
             
             else:
-                raise ValueError('Invalid type. Choose one of: json, int, float, list, bool, str')
+                raise ValueError('Invalid type. Choose one of: json, yaml, int, float, list, bool, str')
             
         elif isinstance(type, FunctionType):
             print(resp)
@@ -165,7 +209,6 @@ def SendValid(ms, type='json', iters=3, **kwargs):
             except ValueError as e:
                 message = e.args[0]
                 print('FAIL', resp, message)
-
                 ms.append(('assistant', resp))
                 ms.append(('user', message))
                 continue

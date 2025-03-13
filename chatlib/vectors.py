@@ -9,54 +9,9 @@ This module provides:
 """
 
 from .common import *
-from pinecone import Pinecone, ServerlessSpec
-from pinecone.exceptions import NotFoundException
+from . import db
 import re
 from bson import ObjectId
-
-# Initialize Pinecone client
-logger.info("Vector DB: %s", os.getenv("PINECONE_INDEX_NAME"))
-pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
-
-def create():
-    """
-    Create a new Pinecone index.
-    
-    Returns:
-        Index: The created Pinecone index
-    """
-    pc.create_index(
-        name=PINECONE_INDEX_NAME,
-        dimension=1536, 
-        metric="cosine", 
-        spec=ServerlessSpec(
-            cloud="aws",
-            region="us-west-2"
-        ) 
-    )
-    return pc.Index(PINECONE_INDEX_NAME)
-
-# Initialize or create index
-try:
-    index = pc.Index(PINECONE_INDEX_NAME)
-except NotFoundException:
-    index = create()
-
-def recreate():
-    """
-    Recreate the Pinecone index.
-    
-    This will delete the existing index if it exists and create a new one.
-    
-    Returns:
-        Index: The newly created Pinecone index
-    """
-    try:
-        pc.delete_index(PINECONE_INDEX_NAME)
-    except NotFoundException:
-        pass
-    return create()
 
 def clean_text(text):
     """
@@ -84,7 +39,7 @@ def _embed(text):
         list: The text embedding vector
     """
     text = clean_text(text)
-    emb = openai_client.embeddings.create(
+    emb = db.openai.embeddings.create(
         input=text,
         model="text-embedding-3-small"
     ).data[0].embedding
@@ -135,7 +90,7 @@ class Embedding:
         if not self.vector:
             raise ValueError("No vector to search with.")
 
-        results = index.query(
+        results = db.pinecone_index.query(
             namespace=pinecone_namespace,
             vector=self.vector,
             filter=filter,
@@ -144,7 +99,7 @@ class Embedding:
 
         # Get objects from MongoDB
         objs = [
-            (r.id, mongo.embeddings.find_one({"_id": ObjectId(r.id)}))
+            (r.id, db.mongo.embeddings.find_one({"_id": ObjectId(r.id)}))
             for r in results.matches
             if r.score > cutoff
         ]
@@ -155,7 +110,7 @@ class Embedding:
 
         # Get the actual objects from their respective tables
         objs = [
-            (rid, mongo[x['table']].find_one({"_id": ObjectId(x['obj_id'])}))
+            (rid, db.mongo[x['table']].find_one({"_id": ObjectId(x['obj_id'])}))
             for rid, x in objs
         ]
 
@@ -165,7 +120,7 @@ class Embedding:
         # Clean up lost objects from Pinecone
         if lost_ids:
             logger.warning(f"Lost {len(lost_ids)} objects in search. Scrubbing from pinecone.")
-            index.delete(lost_ids, namespace=pinecone_namespace)
+            db.pinecone_index.delete(lost_ids, namespace=pinecone_namespace)
 
         return objs
     
@@ -188,9 +143,9 @@ class Embedding:
 
         # Create or find the MongoDB document
         if info is not None:
-            _find = mongo[table].find_one(info)
+            _find = db.mongo[table].find_one(info)
             if not _find:
-                _ins = mongo[table].insert_one(info)
+                _ins = db.mongo[table].insert_one(info)
                 id = _ins.inserted_id
             else:
                 id = _find['_id']
@@ -204,7 +159,7 @@ class Embedding:
             "table": table,
             "obj_id": id,
         }
-        _ins = mongo.embeddings.insert_one(obj)
+        _ins = db.mongo.embeddings.insert_one(obj)
         _id = _ins.inserted_id
 
         # Store vector in Pinecone
@@ -215,7 +170,7 @@ class Embedding:
                 "metadata": metadata
             }
         ]
-        index.upsert(
+        db.pinecone_index.upsert(
             namespace=pinecone_namespace,
             vectors=vectors
         )

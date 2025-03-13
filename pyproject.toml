@@ -20,6 +20,15 @@ dependencies = [
     "pyyaml",
 ]
 
+[project.optional-dependencies]
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=2.0.0",
+    "sphinx-autodoc-typehints>=1.25.0",
+    "myst-parser>=2.0.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/amcgail/chatlib"
-Repository = "https://github.com/amcgail/chatlib.git" 
+Repository = "https://github.com/amcgail/chatlib.git"
+Documentation = "https://amcgail.github.io/chatlib" 

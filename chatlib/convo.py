@@ -9,10 +9,13 @@ This module provides:
 """
 
 from .common import *
-from .llm import Send
+from . import db, Send
+
 from datetime import datetime as dt
 from bson import ObjectId
 from logging import getLogger
+
+mongo = db.mongo
 
 logger = getLogger(__name__)
 

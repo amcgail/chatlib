@@ -14,16 +14,11 @@ import logging
 from datetime import datetime as dt
 from pathlib import Path
 from logging import getLogger
-from openai import OpenAI
-from pymongo import MongoClient
 from bson.objectid import ObjectId
-#from groq import Groq
+from .db import db
 
 logging.basicConfig()
 logger = getLogger(__name__)
-
-# Initialize MongoDB connection
-mongo = MongoClient(os.getenv('MONGO_URI'))[os.getenv('MONGO_DB')]
 
 class MongoMapper:
     """
@@ -50,7 +45,7 @@ class MongoMapper:
         if _id is not None:
             if isinstance(_id, (str, ObjectId)):
                 self.id = ObjectId(_id)
-                self._info = mongo[self.db_name].find_one({'_id': self.id})
+                self._info = db.mongo[self.db_name].find_one({'_id': self.id})
             elif isinstance(_id, dict):
                 self._info = _id
             else:
@@ -76,7 +71,7 @@ class MongoMapper:
         elif isinstance(query, ObjectId):
             query = {'_id': query}
             
-        return [cls(info) for info in mongo[cls.db_name].find(query)]
+        return [cls(info) for info in db.mongo[cls.db_name].find(query)]
     
     @classmethod
     def find_one(cls, query):
@@ -94,7 +89,7 @@ class MongoMapper:
         elif isinstance(query, ObjectId):
             query = {'_id': query}
 
-        info = mongo[cls.db_name].find_one(query)
+        info = db.mongo[cls.db_name].find_one(query)
         if info is None:
             return None
         return cls(info)
@@ -118,7 +113,7 @@ class MongoMapper:
         self._info[key] = value
 
         if hasattr(self, 'id'):
-            mongo[self.db_name].update_one(
+            db.mongo[self.db_name].update_one(
                 {'_id': self.id},
                 {'$set': {key: value}}
             )
@@ -157,9 +152,9 @@ class MongoMapper:
             self: The MongoMapper instance
         """
         if not hasattr(self, 'id'):
-            self.id = mongo[self.db_name].insert_one(self._info).inserted_id
+            self.id = db.mongo[self.db_name].insert_one(self._info).inserted_id
         else:
-            mongo[self.db_name].update_one(
+            db.mongo[self.db_name].update_one(
                 {'_id': self.id},
                 {'$set': self._info}
             )
@@ -181,10 +176,7 @@ class MongoMapper:
 
         self._info[k] += v
 
-        mongo[self.db_name].update_one(
+        db.mongo[self.db_name].update_one(
             {'_id': self.id},
             {'$push': {k: {'$each': v}}}
         )
-
-# Initialize OpenAI client
-openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))

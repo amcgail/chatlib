@@ -11,6 +11,10 @@ from pinecone import Pinecone, ServerlessSpec
 from pinecone.exceptions import NotFoundException
 import os
 
+class MissingEnvironmentError(Exception):
+    """Raised when required environment variables are missing."""
+    pass
+
 class Database:
     """Singleton class for database access."""
     
@@ -27,9 +31,35 @@ class Database:
     
     @property
     def mongo(self):
-        """Lazy load MongoDB client."""
+        """
+        Lazy load MongoDB client.
+        
+        Raises:
+            MissingEnvironmentError: If MONGO_URI or MONGO_DB environment variables are not set
+        """
         if self._mongo is None:
-            self._mongo = MongoClient(os.getenv('MONGO_URI'))[os.getenv('MONGO_DB')]
+            uri = os.getenv('MONGO_URI')
+            db_name = os.getenv('MONGO_DB')
+            
+            if not uri:
+                raise MissingEnvironmentError(
+                    "MONGO_URI environment variable is not set. "
+                    "Please set it to your MongoDB connection string."
+                )
+            if not db_name:
+                raise MissingEnvironmentError(
+                    "MONGO_DB environment variable is not set. "
+                    "Please set it to your target database name."
+                )
+            
+            try:
+                self._mongo = MongoClient(uri)[db_name]
+            except Exception as e:
+                raise ConnectionError(
+                    f"Failed to connect to MongoDB: {str(e)}\n"
+                    "Please check your MONGO_URI and MONGO_DB environment variables."
+                ) from e
+                
         return self._mongo
     
     @property

@@ -9,20 +9,44 @@ This module provides:
 """
 
 from .common import *
-from . import db, Send
+from .common import db
 
 from datetime import datetime as dt
 from bson import ObjectId
 from logging import getLogger
-
-mongo = db.mongo
+from typing import Type, Dict
 
 logger = getLogger(__name__)
+# Registry for Actor types
+_actor_registry: Dict[str, Type['Actor']] = {}
+
+def register_actor(actor_class: Type['Actor']) -> Type['Actor']:
+    """
+    Register a custom Actor type.
+    
+    This decorator allows users to register their own Actor types that can be
+    properly serialized and deserialized from the database.
+    
+    Args:
+        actor_class: The Actor subclass to register
+        
+    Returns:
+        The registered actor class (for decorator usage)
+        
+    Example:
+        @register_actor
+        class MyCustomActor(Actor):
+            def __init__(self, can_leave=True, **kwargs):
+                super().__init__(can_leave=can_leave, **kwargs)
+    """
+    _actor_registry[actor_class.__name__] = actor_class
+    return actor_class
 
 class ConversationEnd(Exception):
     """Exception raised when a conversation should end."""
     pass
 
+@register_actor
 class Actor:
     """
     Represents a participant in a conversation.
@@ -53,7 +77,7 @@ class Actor:
         """
         self._data[name] = value
         if self._id is not None:
-            mongo.actors.update_one({'_id': self._id}, {'$set': {name: value}})
+            db.mongo.actors.update_one({'_id': self._id}, {'$set': {name: value}})
 
     def __contains__(self, name):
         """Check if an attribute exists."""
@@ -77,10 +101,10 @@ class Actor:
         if not self._id:
             dct = dict(self._data)
             dct['type'] = self.__class__.__name__
-            insert = mongo.actors.insert_one(dct)
+            insert = db.mongo.actors.insert_one(dct)
             self._id = insert.inserted_id
         else:
-            mongo.actors.update_one({'_id': self._id}, {'$set': self._data})
+            db.mongo.actors.update_one({'_id': self._id}, {'$set': self._data})
         return self._id
 
     @classmethod
@@ -94,17 +118,23 @@ class Actor:
             
         Returns:
             Actor: The loaded actor instance, or None if not found
+            
+        Raises:
+            ValueError: If actor type is not found in registry
         """
         if isinstance(_id, str):
             _id = ObjectId(_id)
 
-        _find = mongo.actors.find_one({'_id': _id})
+        _find = db.mongo.actors.find_one({'_id': _id})
         if not _find:
             return None
         
-        # Get the appropriate class based on stored type
+        # Get the appropriate class from the registry
         if 'type' in _find:
-            cls = globals()[_find['type']]
+            actor_type = _find['type']
+            if actor_type not in _actor_registry:
+                raise ValueError(f"Actor type '{actor_type}' not found in registry. Did you forget to register it with @register_actor?")
+            cls = _actor_registry[actor_type]
         
         A = cls(can_leave=can_leave)
         A._data = _find
@@ -134,7 +164,7 @@ class Conversation:
         Returns:
             float: Total cost in dollars
         """
-        calls = mongo.LLM_calls.find({'group': self._id})
+        calls = db.mongo.LLM_calls.find({'group': self._id})
         return sum(x['cost'] for x in calls)
 
     @classmethod
@@ -151,13 +181,13 @@ class Conversation:
         if isinstance(_id, str):
             _id = ObjectId(_id)
 
-        _find = mongo.convos.find_one({'_id': _id})
+        _find = db.mongo.convos.find_one({'_id': _id})
         if not _find:
             return None
         
         C = cls()
         C.m = sorted(
-            mongo.messages.find({'convo': _id}),
+            db.mongo.messages.find({'convo': _id}),
             key=lambda x: x['when_server']
         )
         C._id = _id
@@ -170,28 +200,28 @@ class Conversation:
         Returns:
             str: The conversation's MongoDB ID as a string
         """
-        self._id = mongo.convos.insert_one({
+        self._id = db.mongo.convos.insert_one({
             'finished': False
         }).inserted_id
         return str(self._id)
     
     def __setitem__(self, name, value):
         """Update a conversation attribute in MongoDB."""
-        mongo.convos.update_one({'_id': self._id}, {'$set': {name: value}})
+        db.mongo.convos.update_one({'_id': self._id}, {'$set': {name: value}})
 
     def __getitem__(self, name):
         """Get a conversation attribute from MongoDB."""
-        _info = mongo.convos.find_one({'_id': self._id})
+        _info = db.mongo.convos.find_one({'_id': self._id})
         return _info[name] if name in _info else None
     
     def __contains__(self, name):
         """Check if a conversation attribute exists in MongoDB."""
-        return name in mongo.convos.find_one({'_id': self._id})
+        return name in db.mongo.convos.find_one({'_id': self._id})
 
     def delete(self):
         """Delete the conversation and all its messages from MongoDB."""
-        mongo.convos.delete_one({'_id': self._id})
-        mongo.messages.delete_many({'convo': self._id})
+        db.mongo.convos.delete_one({'_id': self._id})
+        db.mongo.messages.delete_many({'convo': self._id})
     
     def say(self, role, message, **kwargs):
         """
@@ -216,7 +246,7 @@ class Conversation:
             **kwargs
         }
         
-        result = mongo.messages.insert_one(obj)
+        result = db.mongo.messages.insert_one(obj)
         obj['_id'] = str(result.inserted_id)
         obj['convo'] = str(obj['convo'])
 

@@ -1,2 +1,6 @@
 **/__pycache__/**
 docs/build
+.coverage
+.DS_Store
+.env
+.venv

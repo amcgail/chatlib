@@ -9,7 +9,7 @@ This module provides:
 """
 
 from .common import *
-from . import db
+from .db import db
 import re
 from bson import ObjectId
 
